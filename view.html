@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Visitor Details</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container-fluid">
+        <h2 class="text-center my-4">Visitor Details</h2>
+        <div id="visitorDetailsContainer" class="card">
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5 class="card-title" id="fullNameDisplay"></h5>
+                        <p id="visitorTypeDisplay"></p>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <a href="list.html" class="btn btn-secondary">Back to List</a>
+                    </div>
+                </div>
+                <hr>
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Cell Number:</strong>
+                        <p id="cellNumberDisplay"></p>
+                        <strong>National ID:</strong>
+                        <p id="nationalIdDisplay"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Vehicle Registration:</strong>
+                        <p id="vehicleRegDisplay">N/A</p>
+                        <strong>Organization Contact:</strong>
+                        <p id="organizationContactDisplay"></p>
+                    </div>
+                </div>
+                <div class="card mt-3">
+                    <div class="card-header">Belongings</div>
+                    <ul class="list-group list-group-flush" id="belongingsList"></ul>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <strong>Entry Date/Time:</strong>
+                        <p id="entryDateTimeDisplay"></p>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Exit Date/Time:</strong>
+                        <p id="exitDateTimeDisplay">Not Exited</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class VisitorDetailsManager {
+            constructor() {
+                this.initializeDatabase();
+            }
+
+            initializeDatabase() {
+                const request = indexedDB.open('VisitorDB', 2);
+                request.onsuccess = (event) => {
+                    this.db = event.target.result;
+                    this.loadVisitorDetails();
+                };
+            }
+
+            loadVisitorDetails() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const visitorId = parseInt(urlParams.get('id'));
+                console.log(visitorId);
+                if (!visitorId) {
+                    alert('Invalid visitor ID');
+                    return;
+                }
+
+                const tx = this.db.transaction(['visitors', 'belongings'], 'readonly');
+                const visitorsStore = tx.objectStore('visitors');
+                const belongingsStore = tx.objectStore('belongings');
+
+                const visitorRequest = visitorsStore.get(visitorId);
+                visitorRequest.onsuccess = (event) => {
+                    const visitor = event.target.result;
+                    this.displayVisitorDetails(visitor);
+
+                    // Load belongings
+                    const belongingsIndex = belongingsStore.index('visitorId');
+                    const belongingsRequest = belongingsIndex.getAll(visitorId);
+                    belongingsRequest.onsuccess = (belongingsEvent) => {
+                        this.displayBelongings(belongingsEvent.target.result);
+                    };
+                };
+            }
+
+            displayVisitorDetails(visitor) {
+                document.getElementById('fullNameDisplay').textContent = visitor.fullName;
+                document.getElementById('visitorTypeDisplay').textContent = visitor.visitorType;
+                document.getElementById('cellNumberDisplay').textContent = visitor.cellNumber;
+                document.getElementById('nationalIdDisplay').textContent = visitor.nationalId;
+                document.getElementById('vehicleRegDisplay').textContent = visitor.vehicleReg || 'N/A';
+                document.getElementById('organizationContactDisplay').textContent = visitor.organizationContact || 'N/A';
+                document.getElementById('entryDateTimeDisplay').textContent = new Date(visitor.entryDateTime).toLocaleString();
+
+                if (visitor.exitDateTime) {
+                    document.getElementById('exitDateTimeDisplay').textContent =
+                        new Date(visitor.exitDateTime).toLocaleString();
+                }
+            }
+
+            displayBelongings(belongings) {
+                const belongingsList = document.getElementById('belongingsList');
+                belongingsList.innerHTML = '';
+
+                if (belongings.length === 0) {
+                    belongingsList.innerHTML = '<li class="list-group-item">No belongings recorded</li>';
+                    return;
+                }
+
+                belongings.forEach(belonging => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'list-group-item';
+                    listItem.innerHTML = `
+                        <strong>${belonging.item}</strong>
+                        <p class="mb-0">${belonging.description}</p>
+                        ${belonging.serialNo ? `<small class="text-muted">Serial/IMEI: ${belonging.serialNo}</small>` : ''}
+                    `;
+                    belongingsList.appendChild(listItem);
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => new VisitorDetailsManager());
+    </script>
+</body>
+
+</html>

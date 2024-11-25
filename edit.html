@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edit Visitor Details</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container-fluid">
+        <h2 class="text-center my-4">Edit Visitor Details</h2>
+        <form id="editVisitorForm">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Full Name*</label>
+                    <input type="text" class="form-control" id="fullName" required>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Cell Number*</label>
+                    <input type="tel" class="form-control" id="cellNumber" required>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Visitor Type*</label>
+                    <select class="form-select" id="visitorType" required>
+                        <option value="staff">Staff</option>
+                        <option value="visitor">Visitor</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">National ID Number*</label>
+                    <input type="text" class="form-control" id="nationalId" required>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Vehicle Registration (Optional)</label>
+                    <input type="text" class="form-control" id="vehicleReg">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Organization Contact</label>
+                    <input type="text" class="form-control" id="organizationContact">
+                </div>
+            </div>
+            <div class="card mb-3">
+                <div class="card-header">
+                    Belongings
+                    <button type="button" class="btn btn-sm btn-primary float-end" id="addBelongingBtn">+ Add
+                        Item</button>
+                </div>
+                <div class="card-body" id="belongingsContainer"></div>
+            </div>
+            <div class="text-center">
+                <button type="submit" class="btn btn-success me-2">Update Visitor</button>
+                <a href="list.html" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        class VisitorEditManager {
+            constructor() {
+                this.initializeDatabase();
+                this.bindEvents();
+                this.visitorId = null;
+                this.existingBelongings = [];
+            }
+
+            initializeDatabase() {
+                const request = indexedDB.open('VisitorDB', 2);
+                request.onsuccess = (event) => {
+                    this.db = event.target.result;
+                    this.loadVisitorDetails();
+                };
+            }
+
+            bindEvents() {
+                document.getElementById('editVisitorForm').addEventListener('submit', this.updateVisitor.bind(this));
+                document.getElementById('addBelongingBtn').addEventListener('click', this.addBelongingLine.bind(this));
+            }
+
+            loadVisitorDetails() {
+                const urlParams = new URLSearchParams(window.location.search);
+                this.visitorId = parseInt(urlParams.get('id'));
+
+                if (!this.visitorId) {
+                    console.log('Invalid visitor ID');
+                    return;
+                }
+
+                const tx = this.db.transaction(['visitors', 'belongings'], 'readonly');
+                const visitorsStore = tx.objectStore('visitors');
+                const belongingsStore = tx.objectStore('belongings');
+
+                const visitorRequest = visitorsStore.get(this.visitorId);
+                visitorRequest.onsuccess = (event) => {
+                    const visitor = event.target.result;
+                    console.table(visitor);
+                    this.populateVisitorForm(visitor);
+
+                    // Load belongings
+                    const belongingsIndex = belongingsStore.index('visitorId');
+                    const belongingsRequest = belongingsIndex.getAll(this.visitorId);
+                    belongingsRequest.onsuccess = (belongingsEvent) => {
+                        this.existingBelongings = belongingsEvent.target.result;
+                        this.displayExistingBelongings();
+                    };
+                };
+            }
+
+            populateVisitorForm(visitor) {
+                document.getElementById('fullName').value = visitor.fullName;
+                document.getElementById('cellNumber').value = visitor.cellNumber;
+                document.getElementById('visitorType').value = visitor.visitorType;
+                document.getElementById('nationalId').value = visitor.nationalId;
+                document.getElementById('vehicleReg').value = visitor.vehicleReg || '';
+                document.getElementById('organizationContact').value = visitor.organizationContact || '';
+            }
+
+            displayExistingBelongings() {
+                const container = document.getElementById('belongingsContainer');
+                container.innerHTML = '';
+
+                this.existingBelongings.forEach(belonging => {
+                    const line = document.createElement('div');
+                    line.className = 'row mb-2';
+                    line.innerHTML = `
+                        <div class="col-5">
+                            <input type="text" class="form-control" value="${belonging.item}" placeholder="Item" required>
+                        </div>
+                        <div class="col-5">
+                            <input type="text" class="form-control" value="${belonging.description}" placeholder="Description" required>
+                        </div>
+                        <div class="col-2">
+                             <input type="text" class="form-control" value="${belonging.serialNo}" placeholder="Description" required>
+                        </div>`
+
+                    container.appendChild(line)
+                });
+            }
+
+
+        }
+        document.addEventListener('DOMContentLoaded', () => new VisitorEditManager());
+    </script>
+
+</body>
+
+</html>

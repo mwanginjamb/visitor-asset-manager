@@ -97,15 +97,25 @@
             }
 
             initializeDatabase() {
-                const request = indexedDB.open('VisitorDB', 1);
+                const request = indexedDB.open('VisitorDB', 2);
                 request.onupgradeneeded = (event) => {
                     const db = event.target.result;
                     if (!db.objectStoreNames.contains('visitors')) {
-                        db.createObjectStore('visitors', { keyPath: 'id', autoIncrement: true });
+                        const visitorStore = db.createObjectStore('visitors', { keyPath: 'id', autoIncrement: true });
+                        // Create indexes for easier searching
+                        visitorStore.createIndex('cellNumber', 'cellNumber', { unique: false });
+                        visitorStore.createIndex('nationalId', 'nationalId', { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains('belongings')) {
+                        const belongingsStore = db.createObjectStore('belongings', { keyPath: 'id', autoIncrement: true });
+                        belongingsStore.createIndex('visitorId', 'visitorId', { unique: false });
                     }
                 };
                 request.onsuccess = (event) => {
                     this.db = event.target.result;
+                };
+                request.onerror = (event) => {
+                    console.error("Database error: ", event.target.error);
                 };
             }
 
@@ -141,35 +151,43 @@
 
                 if (!cellNumber && !nationalId) return;
 
-                const tx = this.db.transaction('visitors', 'readonly');
-                const store = tx.objectStore('visitors');
-                const index = store.index('cellNumber');
+                const tx = this.db.transaction(['visitors', 'belongings'], 'readonly');
+                const visitorsStore = tx.objectStore('visitors');
 
-                const request = store.getAll();
-                request.onsuccess = (event) => {
-                    const visitors = event.target.result;
-                    const latestVisitor = visitors
-                        .filter(v => v.cellNumber === cellNumber || v.nationalId === nationalId)
-                        .sort((a, b) => new Date(b.entryDateTime) - new Date(a.entryDateTime))[0];
+                // Use index to find matching visitors
+                const cellNumberIndex = visitorsStore.index('cellNumber');
+                const nationalIdIndex = visitorsStore.index('nationalId');
 
-                    if (latestVisitor) {
+                const cellNumberRequest = cellNumberIndex.getAll(cellNumber);
+                const nationalIdRequest = nationalIdIndex.getAll(nationalId);
+
+                Promise.all([
+                    new Promise(resolve => cellNumberRequest.onsuccess = () => resolve(cellNumberRequest.result)),
+                    new Promise(resolve => nationalIdRequest.onsuccess = () => resolve(nationalIdRequest.result))
+                ]).then(([cellNumberVisitors, nationalIdVisitors]) => {
+                    const allMatchedVisitors = [...cellNumberVisitors, ...nationalIdVisitors];
+
+                    if (allMatchedVisitors.length > 0) {
+                        // Sort to get the most recent visitor
+                        const latestVisitor = allMatchedVisitors
+                            .sort((a, b) => new Date(b.entryDateTime) - new Date(a.entryDateTime))[0];
+
+                        // Populate visitor details
                         document.getElementById('fullName').value = latestVisitor.fullName;
                         document.getElementById('visitorType').value = latestVisitor.visitorType;
                         document.getElementById('vehicleReg').value = latestVisitor.vehicleReg;
                         document.getElementById('visitLocation').value = latestVisitor.visitLocation;
                         document.getElementById('organizationContact').value = latestVisitor.organizationContact;
                     }
-                };
+                });
             }
+
+
 
             saveVisitorEntry(e) {
                 e.preventDefault();
-                const belongings = Array.from(document.querySelectorAll('#belongingsContainer .row')).map(row => ({
-                    item: row.querySelector('input:nth-child(1)').value,
-                    description: row.querySelector('input:nth-child(2)').value,
-                    serialNo: row.querySelector('input:nth-child(3)').value
-                }));
 
+                // Collect visitor data
                 const visitorData = {
                     cellNumber: document.getElementById('cellNumber').value,
                     fullName: document.getElementById('fullName').value,
@@ -179,16 +197,50 @@
                     visitLocation: document.getElementById('visitLocation').value,
                     organizationContact: document.getElementById('organizationContact').value,
                     entryDateTime: document.getElementById('entryDateTime').value,
-                    belongings: belongings,
                     exitDateTime: null
                 };
 
-                const tx = this.db.transaction('visitors', 'readwrite');
-                const store = tx.objectStore('visitors');
-                store.add(visitorData);
+                // Start a transaction
+                const tx = this.db.transaction(['visitors', 'belongings'], 'readwrite');
+                const visitorsStore = tx.objectStore('visitors');
+                const belongingsStore = tx.objectStore('belongings');
 
-                alert('Visitor entry saved successfully!');
-                e.target.reset();
+                // Save visitor first to get the auto-generated ID
+                const visitorRequest = visitorsStore.add(visitorData);
+
+                visitorRequest.onsuccess = (event) => {
+                    const visitorId = event.target.result;
+
+                    // Collect and save belongings with the visitor's ID
+                    const belongingsContainer = document.getElementById('belongingsContainer');
+                    const belongingRows = belongingsContainer.querySelectorAll('.row');
+
+                    belongingRows.forEach(row => {
+                        // Get input elements
+                        const itemInput = row.querySelector('.col-5:nth-child(1) input');
+                        const descInput = row.querySelector('.col-5:nth-child(2) input');
+                        const serialInput = row.querySelector('.col-2 input');
+
+                        // Only add if at least item and description are filled
+                        if (itemInput && descInput &&
+                            itemInput.value.trim() &&
+                            descInput.value.trim()) {
+                            const belongingData = {
+                                visitorId: visitorId,
+                                item: itemInput.value.trim(),
+                                description: descInput.value.trim(),
+                                serialNo: serialInput ? serialInput.value.trim() : ''
+                            };
+                            belongingsStore.add(belongingData);
+                        }
+                    });
+                };
+
+                tx.oncomplete = () => {
+                    alert('Visitor entry saved successfully!');
+                    e.target.reset();
+                    document.getElementById('belongingsContainer').innerHTML = ''; // Clear belongings
+                };
             }
 
             markVisitorExit() {
@@ -200,26 +252,35 @@
                     return;
                 }
 
-                const tx = this.db.transaction('visitors', 'readwrite');
-                const store = tx.objectStore('visitors');
+                const tx = this.db.transaction(['visitors', 'belongings'], 'readwrite');
+                const visitorsStore = tx.objectStore('visitors');
 
-                const request = store.getAll();
-                request.onsuccess = (event) => {
-                    const visitors = event.target.result;
-                    const activeVisitor = visitors
-                        .filter(v => (v.cellNumber === cellNumber || v.nationalId === nationalId) && !v.exitDateTime)
+                const cellNumberIndex = visitorsStore.index('cellNumber');
+                const nationalIdIndex = visitorsStore.index('nationalId');
+
+                const cellNumberRequest = cellNumberIndex.getAll(cellNumber);
+                const nationalIdRequest = nationalIdIndex.getAll(nationalId);
+
+                Promise.all([
+                    new Promise(resolve => cellNumberRequest.onsuccess = () => resolve(cellNumberRequest.result)),
+                    new Promise(resolve => nationalIdRequest.onsuccess = () => resolve(nationalIdRequest.result))
+                ]).then(([cellNumberVisitors, nationalIdVisitors]) => {
+                    const allMatchedVisitors = [...cellNumberVisitors, ...nationalIdVisitors];
+
+                    const activeVisitor = allMatchedVisitors
+                        .filter(v => !v.exitDateTime)
                         .sort((a, b) => new Date(b.entryDateTime) - new Date(a.entryDateTime))[0];
 
                     if (activeVisitor) {
                         activeVisitor.exitDateTime = new Date().toISOString();
                         const duration = moment(activeVisitor.exitDateTime).diff(moment(activeVisitor.entryDateTime), 'hours', true);
 
-                        store.put(activeVisitor);
+                        visitorsStore.put(activeVisitor);
                         alert(`Visit duration: ${duration.toFixed(2)} hours`);
                     } else {
                         alert('No active visitor entry found');
                     }
-                };
+                });
             }
         }
 
