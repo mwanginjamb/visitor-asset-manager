@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Visitor Management System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+        }
+
+        #belongingsContainer {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        @media (max-width: 576px) {
+            .form-control {
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+        <h2 class="text-center mb-4">Visitor Management System</h2>
+        <form id="visitorForm" class="needs-validation" novalidate>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Cell Number*</label>
+                    <input type="tel" class="form-control" id="cellNumber" required>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Full Name*</label>
+                    <input type="text" class="form-control" id="fullName" required>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Visitor Type*</label>
+                    <select class="form-select" id="visitorType" required>
+                        <option value="staff">Staff</option>
+                        <option value="visitor">Visitor</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">National ID Number*</label>
+                    <input type="text" class="form-control" id="nationalId" required>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Vehicle Registration (Optional)</label>
+                    <input type="text" class="form-control" id="vehicleReg">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Visit Location*</label>
+                    <input type="text" class="form-control" id="visitLocation" required>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Organization Contact</label>
+                    <input type="text" class="form-control" id="organizationContact">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Entry Date/Time*</label>
+                    <input type="datetime-local" class="form-control" id="entryDateTime" required>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header">
+                    Visitor Belongings
+                    <button type="button" class="btn btn-sm btn-primary float-end" id="addBelongingBtn">+ Add
+                        Item</button>
+                </div>
+                <div class="card-body" id="belongingsContainer"></div>
+            </div>
+
+            <div class="text-center">
+                <button type="submit" class="btn btn-success me-2">Submit Entry</button>
+                <button type="button" class="btn btn-warning" id="exitVisitorBtn">Mark Exit</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+    <script>
+        class VisitorManagementSystem {
+            constructor() {
+                this.initializeDatabase();
+                this.bindEvents();
+            }
+
+            initializeDatabase() {
+                const request = indexedDB.open('VisitorDB', 1);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains('visitors')) {
+                        db.createObjectStore('visitors', { keyPath: 'id', autoIncrement: true });
+                    }
+                };
+                request.onsuccess = (event) => {
+                    this.db = event.target.result;
+                };
+            }
+
+            bindEvents() {
+                document.getElementById('addBelongingBtn').addEventListener('click', this.addBelongingLine.bind(this));
+                document.getElementById('visitorForm').addEventListener('submit', this.saveVisitorEntry.bind(this));
+                document.getElementById('exitVisitorBtn').addEventListener('click', this.markVisitorExit.bind(this));
+                document.getElementById('cellNumber').addEventListener('change', this.autoPopulateFromPreviousVisit.bind(this));
+                document.getElementById('nationalId').addEventListener('change', this.autoPopulateFromPreviousVisit.bind(this));
+            }
+
+            addBelongingLine(e) {
+                const container = document.getElementById('belongingsContainer');
+                const line = document.createElement('div');
+                line.className = 'row mb-2';
+                line.innerHTML = `
+                    <div class="col-5">
+                        <input type="text" class="form-control" placeholder="Item" required>
+                    </div>
+                    <div class="col-5">
+                        <input type="text" class="form-control" placeholder="Description" required>
+                    </div>
+                    <div class="col-2">
+                        <input type="text" class="form-control" placeholder="Serial/IMEI">
+                    </div>
+                `;
+                container.appendChild(line);
+            }
+
+            async autoPopulateFromPreviousVisit(e) {
+                const cellNumber = document.getElementById('cellNumber').value;
+                const nationalId = document.getElementById('nationalId').value;
+
+                if (!cellNumber && !nationalId) return;
+
+                const tx = this.db.transaction('visitors', 'readonly');
+                const store = tx.objectStore('visitors');
+                const index = store.index('cellNumber');
+
+                const request = store.getAll();
+                request.onsuccess = (event) => {
+                    const visitors = event.target.result;
+                    const latestVisitor = visitors
+                        .filter(v => v.cellNumber === cellNumber || v.nationalId === nationalId)
+                        .sort((a, b) => new Date(b.entryDateTime) - new Date(a.entryDateTime))[0];
+
+                    if (latestVisitor) {
+                        document.getElementById('fullName').value = latestVisitor.fullName;
+                        document.getElementById('visitorType').value = latestVisitor.visitorType;
+                        document.getElementById('vehicleReg').value = latestVisitor.vehicleReg;
+                        document.getElementById('visitLocation').value = latestVisitor.visitLocation;
+                        document.getElementById('organizationContact').value = latestVisitor.organizationContact;
+                    }
+                };
+            }
+
+            saveVisitorEntry(e) {
+                e.preventDefault();
+                const belongings = Array.from(document.querySelectorAll('#belongingsContainer .row')).map(row => ({
+                    item: row.querySelector('input:nth-child(1)').value,
+                    description: row.querySelector('input:nth-child(2)').value,
+                    serialNo: row.querySelector('input:nth-child(3)').value
+                }));
+
+                const visitorData = {
+                    cellNumber: document.getElementById('cellNumber').value,
+                    fullName: document.getElementById('fullName').value,
+                    visitorType: document.getElementById('visitorType').value,
+                    nationalId: document.getElementById('nationalId').value,
+                    vehicleReg: document.getElementById('vehicleReg').value,
+                    visitLocation: document.getElementById('visitLocation').value,
+                    organizationContact: document.getElementById('organizationContact').value,
+                    entryDateTime: document.getElementById('entryDateTime').value,
+                    belongings: belongings,
+                    exitDateTime: null
+                };
+
+                const tx = this.db.transaction('visitors', 'readwrite');
+                const store = tx.objectStore('visitors');
+                store.add(visitorData);
+
+                alert('Visitor entry saved successfully!');
+                e.target.reset();
+            }
+
+            markVisitorExit() {
+                const cellNumber = document.getElementById('cellNumber').value;
+                const nationalId = document.getElementById('nationalId').value;
+
+                if (!cellNumber && !nationalId) {
+                    alert('Please enter Cell Number or National ID');
+                    return;
+                }
+
+                const tx = this.db.transaction('visitors', 'readwrite');
+                const store = tx.objectStore('visitors');
+
+                const request = store.getAll();
+                request.onsuccess = (event) => {
+                    const visitors = event.target.result;
+                    const activeVisitor = visitors
+                        .filter(v => (v.cellNumber === cellNumber || v.nationalId === nationalId) && !v.exitDateTime)
+                        .sort((a, b) => new Date(b.entryDateTime) - new Date(a.entryDateTime))[0];
+
+                    if (activeVisitor) {
+                        activeVisitor.exitDateTime = new Date().toISOString();
+                        const duration = moment(activeVisitor.exitDateTime).diff(moment(activeVisitor.entryDateTime), 'hours', true);
+
+                        store.put(activeVisitor);
+                        alert(`Visit duration: ${duration.toFixed(2)} hours`);
+                    } else {
+                        alert('No active visitor entry found');
+                    }
+                };
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => new VisitorManagementSystem());
+    </script>
+</body>
+
+</html>
